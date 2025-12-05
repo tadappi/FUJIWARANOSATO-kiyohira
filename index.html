@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>GLB — Object Autorotate (Click to Pause/Resume) + Axes</title>
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <style>
+    html,body{margin:0;height:100%}
+    .hint{
+      position:fixed;left:10px;bottom:10px;color:#e0e0e0;
+      font:12px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      background:rgba(0,0,0,.35);padding:6px 8px;border-radius:6px
+    }
+  </style>
+</head>
+<body>
+  <div class="hint">
+    開始5秒静止 → 6秒移動 → 3秒静止 → モデルが中心で自動回転<br>
+    クリックで「回転 停止 / 再開」切替（ドラッグ・ズーム不可）
+  </div>
+
+  <a-scene renderer="colorManagement:true" background="color:#c2c2c2"  
+    device-orientation-permission-ui="enabled: false"
+  xr-mode-ui="enabled: false"
+  vr-mode-ui="enabled: false">
+
+  
+    <!-- ライト -->
+    <a-entity light="type:ambient;intensity:0.6"></a-entity>
+    <a-entity light="type:directional;intensity:0.9" position="2 4 2"></a-entity>
+
+    <!-- モデル：原点中心で回転。XYZ軸は子にして一緒に回す -->
+    <a-entity id="modelRoot"
+      position="0 0 0"
+      auto-spin="speedDegPerSec:4; rampMs:1200; enabled:false">
+      <a-entity axes-helper="size:0.1"></a-entity>
+      <a-entity gltf-model="url(./kyara.glb)" position="0 0 0" rotation="0 0 0" scale="1 1 1"></a-entity>
+    </a-entity>
+
+    <!-- カメラ（固定。look-controls等は付けない） -->
+    <a-entity id="rig"
+      position="0.8 5 8"
+      rotation="-55 0 0"
+      animation__move="property: position; to: 1 15 20; dur: 6000; delay: 5000; easing: easeInOutQuad"
+      animation__look="property: rotation; to: -40 0 0; dur: 6000; delay: 5000; easing: easeInOutQuad">
+      <a-entity id="cam" camera="fov:40"></a-entity>
+    </a-entity>
+  </a-scene>
+
+  <script>
+    // ===== XYZ軸（赤X・緑Y・青Z） =====
+    AFRAME.registerComponent('axes-helper', {
+      schema: { size: {default: 1} },
+      init() {
+        const axes = new THREE.AxesHelper(this.data.size);
+        this.el.setObject3D('mesh', axes);
+      }
+    });
+
+    // ===== モデルの自動回転（クリックで一時停止/再開・再開時はなめらかに） =====
+    AFRAME.registerComponent('auto-spin', {
+      schema: { speedDegPerSec:{default:4}, rampMs:{default:1200}, enabled:{default:false} },
+      init(){
+        this.running = this.data.enabled;   // 現在回っているか
+        this._rampT  = 0;                   // 速度立ち上げ用(0→1)
+        // シーンのキャンバス押下でトグル
+        const canvas = this.el.sceneEl.canvas;
+        const onReady = () => {
+          canvas.addEventListener('click', () => {
+            if (this.running) {             // 回っていたら停止
+              this.running = false;
+            } else {                        // 停止中なら再開（ゆっくり立ち上げ）
+              this.running = true;
+              this._rampT = 0;
+            }
+          });
+        };
+        if (canvas) onReady(); else this.el.sceneEl.addEventListener('render-target-loaded', onReady);
+      },
+      tick(t,dt){
+        if (!this.running) return;
+        const rot = this.el.getAttribute('rotation');
+        const dsec = dt/1000;
+        // 速度のなめらか立ち上げ
+        let k=1;
+        if (this._rampT < 1){
+          this._rampT = Math.min(1, this._rampT + dsec/(this.data.rampMs/1000));
+          const x=this._rampT; k = x<0.5 ? 4*x*x*x : 1 - Math.pow(-2*x+2,3)/2; // easeInOutCubic
+        }
+        rot.y += this.data.speedDegPerSec * k * dsec; // Yawのみ
+        this.el.setAttribute('rotation', rot);
+      },
+      setEnabled(on){
+        this.running = on;
+        if (on) this._rampT = 0;
+      }
+    });
+
+    // ===== シーケンス（ロード後に安全に実行） =====
+    document.querySelector('a-scene').addEventListener('loaded', ()=>{
+      const rig = document.querySelector('#rig');
+      const modelRoot = document.querySelector('#modelRoot');
+      const auto = modelRoot.components['auto-spin'];
+
+      // 初期モーション完了 → 3秒待って自動回転ON
+      rig.addEventListener('animationcomplete__move', ()=>{
+        setTimeout(()=>{ auto.setEnabled(true); }, 3000);
+      });
+
+      // すべてのユーザー操作（ドラッグ/ズーム/キー）は無効化
+      const prevent = e => { e.preventDefault(); e.stopPropagation(); };
+      const canvas = document.querySelector('canvas');
+      ['pointerdown','pointermove','pointerup','wheel','keydown','keyup','gesturestart','gesturechange','gestureend','touchstart','touchmove','touchend']
+        .forEach(type => window.addEventListener(type, prevent, {passive:false}));
+      // テキスト選択カーソルなども出さない
+      if (canvas) canvas.style.touchAction = 'none';
+    });
+  </script>
+</body>
+</html>
+
