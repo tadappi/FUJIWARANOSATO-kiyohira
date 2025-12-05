@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>GLB — Autorotate + Mouse Drag & Zoom</title>
+  <title>GLB — Autorotate + Wheel Zoom Only</title>
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <style>
     html,body{margin:0;height:100%}
@@ -16,9 +16,8 @@
 </head>
 <body>
   <div class="hint">
-    最初から自動回転。<br>
-    マウスドラッグでモデルをグリグリ、ホイールでズーム。<br>
-    操作をやめると数秒後にふわっと自動回転が再開。
+    ・モデルは最初からずっと自動回転<br>
+    ・マウスホイール：ズームイン／アウトのみ（カメラの距離）
   </div>
 
   <a-scene renderer="colorManagement:true" background="color:#c2c2c2"
@@ -33,8 +32,9 @@
     <!-- モデル：原点中心で回転。XYZ軸は子にして一緒に回す -->
     <a-entity id="modelRoot"
       position="0 0 0"
-      auto-spin="speedDegPerSec:4; rampMs:1200; idleSec:3; enabled:true">
+      auto-spin="speedDegPerSec:4">
       <a-entity axes-helper="size:0.1"></a-entity>
+
       <!-- ここは自分の glb に合わせてパス/スケール調整 -->
       <a-entity gltf-model="url(./kiyohira.glb)"
                 position="0 0 0"
@@ -42,7 +42,7 @@
                 scale="0.2 0.2 0.2"></a-entity>
     </a-entity>
 
-    <!-- カメラ（位置固定、ズームはスクリプトでZだけ動かす） -->
+    <!-- カメラ：Zだけ動かしてズーム -->
     <a-entity id="rig"
       position="0 4 10"
       rotation="-25 0 0">
@@ -60,122 +60,31 @@
       }
     });
 
-    // ===== モデル自動回転：ユーザー操作で一時停止、数秒後に再開 =====
+    // ===== モデルの自動回転（ずっと回りっぱなし） =====
     AFRAME.registerComponent('auto-spin', {
       schema: {
-        speedDegPerSec: {default: 4},   // 自動回転の速度（度/秒）
-        rampMs:         {default: 1200},// 立ち上がり時間（ms）
-        idleSec:        {default: 3},   // 最後の操作から何秒で再開か
-        enabled:        {default: true}
+        speedDegPerSec: { default: 4 } // 回転速度（度/秒）
       },
-      init() {
-        this.running = this.data.enabled;
-        this._rampT = this.running ? 1 : 0;
-        this._lastUserMs = -Infinity; // ユーザー操作時刻（performance.now）
-      },
-      // ユーザーがドラッグ/ズームしたときに呼んでもらう
-      userKick() {
-        this._lastUserMs = performance.now();
-        this.running = false;  // 一旦止める
-      },
-      tick(t, dt) {
-        const now = performance.now();
-
-        // 止まっている間は、一定時間経過したら再び回転をON
-        if (!this.running) {
-          if (now - this._lastUserMs >= this.data.idleSec * 1000) {
-            this.running = true;
-            this._rampT = 0; // 再開時はゆっくり立ち上げ
-          } else {
-            return;
-          }
-        }
-
-        // ここから回転処理
+      tick: function (t, dt) {
         const rot = this.el.getAttribute('rotation');
         const dsec = dt / 1000;
-
-        // 速度のなめらか立ち上げ
-        let k = 1;
-        if (this._rampT < 1) {
-          this._rampT = Math.min(1, this._rampT + dsec / (this.data.rampMs / 1000));
-          const x = this._rampT;
-          // easeInOutCubic
-          k = x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
-        }
-
-        rot.y += this.data.speedDegPerSec * k * dsec; // Yawのみ
+        rot.y += this.data.speedDegPerSec * dsec; // Yawのみ
         this.el.setAttribute('rotation', rot);
       }
     });
 
-    // ===== シーン読み込み後にドラッグ・ズーム処理を設定 =====
+    // ===== シーン読み込み後：ホイールズームだけ設定 =====
     document.querySelector('a-scene').addEventListener('loaded', () => {
-      const scene     = document.querySelector('a-scene');
-      const canvas    = scene.canvas;
-      const modelRoot = document.querySelector('#modelRoot');
-      const rig       = document.querySelector('#rig');
-      const auto      = modelRoot.components['auto-spin'];
+      const scene  = document.querySelector('a-scene');
+      const canvas = scene.canvas;
+      const rig    = document.querySelector('#rig');
 
-      // キャンバスがまだ取れない場合用
       if (!canvas) return;
 
-      // マウスドラッグでモデルを回す
-      let isDragging = false;
-      let lastX = 0;
-      let lastY = 0;
-
-      const dragSpeed = 0.3; // 1pxあたりの回転量（度）
-
-      canvas.style.cursor = 'grab';
-      canvas.style.touchAction = 'none'; // スマホでのブラウザスクロールを防止
-
-      canvas.addEventListener('pointerdown', (e) => {
-        isDragging = true;
-        lastX = e.clientX;
-        lastY = e.clientY;
-        canvas.setPointerCapture(e.pointerId);
-        canvas.style.cursor = 'grabbing';
-        auto.userKick(); // 操作開始 → 自動回転一時停止
-      });
-
-      canvas.addEventListener('pointermove', (e) => {
-        if (!isDragging) return;
-
-        const dx = e.clientX - lastX;
-        const dy = e.clientY - lastY;
-        lastX = e.clientX;
-        lastY = e.clientY;
-
-        const rot = modelRoot.getAttribute('rotation');
-        rot.y += dx * dragSpeed;
-        rot.x += dy * dragSpeed;
-
-        // 上下の振りすぎ防止
-        rot.x = Math.max(-80, Math.min(80, rot.x));
-
-        modelRoot.setAttribute('rotation', rot);
-
-        auto.userKick(); // 動かしている間はタイマーをリセット
-      });
-
-      const endDrag = (e) => {
-        if (!isDragging) return;
-        isDragging = false;
-        if (e && e.pointerId != null && canvas.hasPointerCapture(e.pointerId)) {
-          canvas.releasePointerCapture(e.pointerId);
-        }
-        canvas.style.cursor = 'grab';
-        // ここでは userKick() しない（最後の pointermove でされている）
-      };
-
-      canvas.addEventListener('pointerup', endDrag);
-      canvas.addEventListener('pointerleave', endDrag);
-
-      // ホイールでズーム（rig の z を前後させる）
-      const minZ = 4;   // これより近づかない
-      const maxZ = 20;  // これより遠ざからない
-      const zoomSpeed = 0.01; // deltaY との掛け算係数
+      // ズーム範囲と速度
+      const minZ = 4;   // これ以上近づかない
+      const maxZ = 20;  // これ以上遠ざからない
+      const zoomSpeed = 0.01; // deltaYに掛ける係数
 
       canvas.addEventListener('wheel', (e) => {
         e.preventDefault();
@@ -184,8 +93,6 @@
         pos.z += e.deltaY * zoomSpeed;
         pos.z = Math.max(minZ, Math.min(maxZ, pos.z));
         rig.setAttribute('position', pos);
-
-        auto.userKick(); // ズーム操作でも自動回転一時停止
       }, { passive: false });
     });
   </script>
